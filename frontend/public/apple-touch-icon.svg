@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <!-- Apple touch icon background -->
+  <rect width="180" height="180" rx="40" fill="#1DA1F2"/>
+  
+  <!-- Inner white rounded square -->
+  <rect x="25" y="25" width="130" height="130" rx="30" fill="white"/>
+  
+  <!-- A stylized "A" / payment symbol -->
+  <path d="M90 55 L120 125 L105 125 L100 110 L95 110 L90 125 L75 125 Z" fill="#1DA1F2"/>
+  <rect x="95" y="95" width="10" height="15" fill="white"/>
+  
+  <!-- Dollar coin -->
+  <circle cx="135" cy="135" r="18" fill="#1DA1F2"/>
+  <text x="135" y="142" text-anchor="middle" font-size="20" fill="white" font-weight="bold">$</text>
+</svg>

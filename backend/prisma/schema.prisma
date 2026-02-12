@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  type          String   // HUMAN or AGENT
+  email         String?  @unique // humans only
+  passwordHash  String?  // humans only
+  displayName   String   @unique
+  emailVerified Boolean  @default(false)
+  apiKey        String?  @unique // agents only
+  apiKeyHash    String?  // hashed version for lookup
+
+  // Spending controls
+  dailyLimit    Float?   // max USDC per day (null = unlimited)
+  txLimit       Float?   // max per single transaction
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  wallet        Wallet?
+  bankAccounts  BankAccount[]
+  sentTxs       Transaction[] @relation("sender")
+  receivedTxs   Transaction[] @relation("receiver")
+  webhooks      Webhook[]
+  friendsAdded    Friendship[] @relation("friendAdder")
+  friendsReceived Friendship[] @relation("friendTarget")
+  verificationCodes VerificationCode[]
+
+  @@index([type])
+  @@index([apiKeyHash])
+}
+
+model Wallet {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+
+  // Solana wallet
+  publicKey       String   @unique  // Solana public key (base58)
+  encryptedSecret String   // encrypted private key (never exposed to agents)
+
+  // Cached balance (updated on each tx)
+  usdcBalance     Float    @default(0)
+
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([publicKey])
+}
+
+model Transaction {
+  id            String            @id @default(uuid())
+  type          String            // DEPOSIT, WITHDRAW, TRANSFER
+  status        String            @default("PENDING") // PENDING, CONFIRMED, FAILED, CANCELLED
+
+  // Participants
+  senderId      String?
+  sender        User?             @relation("sender", fields: [senderId], references: [id])
+  receiverId    String?
+  receiver      User?             @relation("receiver", fields: [receiverId], references: [id])
+
+  // Amounts
+  amount        Float             // USDC amount
+  fee           Float             @default(0) // platform fee
+
+  // Solana details
+  solanaSignature String?         // on-chain tx signature
+  fromWallet      String?         // source wallet public key
+  toWallet        String?         // destination wallet public key
+
+  // Metadata
+  memo          String?           // optional note
+  metadata      Json?             // arbitrary JSON (agent context, etc.)
+
+  createdAt     DateTime          @default(now())
+  confirmedAt   DateTime?
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model BankAccount {
+  id                     String   @id @default(uuid())
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id])
+  bankName               String   // e.g. "Chase", "Bank of America"
+  accountType            String   // CHECKING or SAVINGS
+  encryptedAccountNumber String   // AES-256-CBC encrypted full account number
+  encryptedRoutingNumber String   // AES-256-CBC encrypted full routing number
+  accountLast4           String   // last 4 digits (for display only)
+  routingLast4           String   // last 4 digits (for display only)
+  isDefault              Boolean  @default(false)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+
+  @@index([userId])
+}
+
+model VerificationCode {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  code      String   // bcrypt-hashed 6-digit code
+  type      String   // EMAIL_VERIFY or PASSWORD_RESET
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userId    String   // the user who sent the request
+  friendId  String   // the user who receives the request
+  status    String   @default("PENDING") // PENDING or ACCEPTED
+  user      User     @relation("friendAdder", fields: [userId], references: [id])
+  friend    User     @relation("friendTarget", fields: [friendId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, friendId])
+  @@index([userId])
+  @@index([friendId])
+}
+
+model Webhook {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  url         String   // callback URL
+  secret      String   // HMAC signing secret
+  events      String   // JSON-encoded array: '["transaction.confirmed", "transaction.failed"]'
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}

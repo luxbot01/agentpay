@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  /* Old school Twitter colors */
+  --color-twitter-blue: #1DA1F2;
+  --color-twitter-blue-dark: #1a91da;
+  --color-twitter-blue-light: #e8f5fe;
+  --color-twitter-gray: #657786;
+  --color-twitter-gray-light: #aab8c2;
+  --color-twitter-gray-lighter: #e1e8ed;
+  --color-twitter-gray-lightest: #f5f8fa;
+  --color-twitter-black: #14171a;
+  --color-twitter-white: #ffffff;
+
+  --animate-fade-in: fade-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-10px) translateX(-50%); }
+  to { opacity: 1; transform: translateY(0) translateX(-50%); }
+}
