@@ -51,6 +51,14 @@ interface BankAccount {
   createdAt: string
 }
 
+interface LinkedAgent {
+  id: string
+  displayName: string
+  walletAddress?: string
+  dailyLimit?: number | null
+  txLimit?: number | null
+  createdAt: string
+}
 
 function App() {
   // Auth state
@@ -121,6 +129,14 @@ function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
+  // Agent pairing state
+  const [linkedAgents, setLinkedAgents] = useState<LinkedAgent[]>([])
+  const [showPairingModal, setShowPairingModal] = useState(false)
+  const [pairingToken, setPairingToken] = useState<string | null>(null)
+  const [pairingAgentName, setPairingAgentName] = useState('')
+  const [pairingDailyLimit, setPairingDailyLimit] = useState('')
+  const [pairingTxLimit, setPairingTxLimit] = useState('')
+
   // Load user data on mount if token exists
   useEffect(() => {
     if (token) {
@@ -131,6 +147,7 @@ function App() {
       fetchBankAccounts()
       fetchFriends()
       fetchFriendRequests()
+      fetchLinkedAgents()
     }
   }, [token])
 
@@ -663,6 +680,50 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Agent pairing handlers
+  const fetchLinkedAgents = async () => {
+    try {
+      const res = await apiFetch('/auth/agents')
+      if (res.ok) {
+        const data = await res.json()
+        setLinkedAgents(data.agents || [])
+      }
+    } catch { /* ignore */ }
+  }
+
+  const handleGeneratePairingToken = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const body: Record<string, unknown> = {}
+      if (pairingAgentName.trim()) body.agentName = pairingAgentName.trim().replace(/^@/, '')
+      if (pairingDailyLimit) body.dailyLimit = parseFloat(pairingDailyLimit)
+      if (pairingTxLimit) body.txLimit = parseFloat(pairingTxLimit)
+      const res = await apiFetch('/auth/agents/pairing-token', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to generate token')
+      setPairingToken(data.pairingToken)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to generate pairing token')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRevokeAgent = async (agentId: string) => {
+    try {
+      const res = await apiFetch(`/auth/agents/${agentId}`, { method: 'DELETE' })
+      if (res.ok) {
+        fetchLinkedAgents()
+        setToast('Agent revoked')
+        setTimeout(() => setToast(null), 2500)
+      }
+    } catch { /* ignore */ }
   }
 
   const handleLogout = () => {
@@ -1431,6 +1492,48 @@ function App() {
             </div>
 
             <div className="bg-white rounded-xl border border-twitter-gray-lighter overflow-hidden">
+              <div className="p-4 border-b border-twitter-gray-lighter flex justify-between items-center">
+                <h2 className="font-bold text-twitter-black">AI Agents</h2>
+                <button
+                  onClick={() => { setShowPairingModal(true); setPairingToken(null); setPairingAgentName(''); setPairingDailyLimit(''); setPairingTxLimit('') }}
+                  className="text-twitter-blue text-sm font-semibold hover:underline"
+                >
+                  + Create Agent
+                </button>
+              </div>
+              {linkedAgents.length === 0 ? (
+                <div className="p-6 text-center text-twitter-gray">
+                  <p className="text-sm">No linked AI agents</p>
+                  <p className="text-xs mt-1">Create a pairing token to connect an agent</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-twitter-gray-lighter">
+                  {linkedAgents.map(agent => (
+                    <div key={agent.id} className="p-4 flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-twitter-black flex items-center gap-2">
+                          @{agent.displayName}
+                          <span className="text-xs bg-twitter-blue/10 text-twitter-blue px-2 py-0.5 rounded-full">Agent</span>
+                        </div>
+                        <div className="text-xs text-twitter-gray mt-0.5">
+                          {agent.dailyLimit ? `$${agent.dailyLimit}/day` : 'No daily limit'}
+                          {' | '}
+                          {agent.txLimit ? `$${agent.txLimit}/tx` : 'No tx limit'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRevokeAgent(agent.id)}
+                        className="text-red-400 text-xs hover:text-red-600"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl border border-twitter-gray-lighter overflow-hidden">
               <div className="p-4 border-b border-twitter-gray-lighter">
                 <h2 className="font-bold text-twitter-black">Wallet</h2>
               </div>
@@ -1723,6 +1826,59 @@ function App() {
                 {loading ? 'Withdrawing...' : 'Withdraw'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Agent Pairing Modal */}
+      {showPairingModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Create AI Agent</h3>
+              <button onClick={() => { setShowPairingModal(false); setPairingToken(null); setError(null) }} className="text-twitter-gray hover:text-twitter-black">&#10005;</button>
+            </div>
+            {error && <div className="bg-red-100 text-red-600 p-3 rounded-lg mb-4 text-sm">{error}</div>}
+            {pairingToken ? (
+              <div className="space-y-4">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-green-700 mb-2">Pairing Token Generated</p>
+                  <p className="text-xs text-green-600 mb-3">Give this token to your AI agent. It expires in 15 minutes and can only be used once.</p>
+                  <div className="bg-white p-3 rounded-lg border border-green-200">
+                    <code className="text-xs font-mono break-all text-twitter-black select-all">{pairingToken}</code>
+                  </div>
+                </div>
+                <div className="bg-twitter-gray-lightest p-3 rounded-lg text-xs text-twitter-gray">
+                  <p className="font-semibold mb-1">Agent Registration Command:</p>
+                  <code className="block break-all">curl -X POST {API_BASE_URL}/api/auth/register/agent -H &quot;Content-Type: application/json&quot; -d &apos;{`{"pairingToken":"${pairingToken.slice(0, 8)}..."}`}&apos;</code>
+                </div>
+                <button onClick={() => { setShowPairingModal(false); setPairingToken(null); fetchLinkedAgents() }} className="w-full bg-twitter-blue hover:bg-twitter-blue-dark text-white py-3 rounded-full font-semibold transition-colors">
+                  Done
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-twitter-gray mb-1">Agent Username (optional)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3 text-twitter-gray font-semibold">@</span>
+                    <input type="text" value={pairingAgentName} onChange={(e) => setPairingAgentName(e.target.value.replace(/^@/, '').replace(/\s/g, ''))} placeholder="my-agent" className="w-full p-3 pl-8 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-twitter-gray mb-1">Daily Spending Limit (USDC)</label>
+                  <input type="number" value={pairingDailyLimit} onChange={(e) => setPairingDailyLimit(e.target.value)} placeholder="No limit" step="1" min="0" className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-twitter-gray mb-1">Per-Transaction Limit (USDC)</label>
+                  <input type="number" value={pairingTxLimit} onChange={(e) => setPairingTxLimit(e.target.value)} placeholder="No limit" step="1" min="0" className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue" />
+                </div>
+                <p className="text-xs text-twitter-gray">The token will be valid for 15 minutes. Your agent will be linked to your account with the limits you set.</p>
+                <button onClick={handleGeneratePairingToken} disabled={loading} className="w-full bg-twitter-blue hover:bg-twitter-blue-dark text-white py-3 rounded-full font-semibold transition-colors disabled:opacity-50">
+                  {loading ? 'Generating...' : 'Generate Pairing Token'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
