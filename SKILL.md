@@ -7,11 +7,13 @@
 
 ## Quick Start
 
+Agents must be paired with a human account before they can register. The human generates a one-time pairing token from their dashboard, then gives it to the agent.
+
 ```bash
-# 1. Register your agent
+# 1. Register your agent (requires pairing token from human owner)
 curl -X POST http://localhost:3001/api/auth/register/agent \
   -H "Content-Type: application/json" \
-  -d '{"displayName": "my-agent", "txLimit": 100}'
+  -d '{"pairingToken": "abc123...", "displayName": "my-agent"}'
 
 # Response: { "user": {...}, "apiKey": "agentpay_abc123..." }
 # SAVE THIS KEY — it cannot be retrieved later.
@@ -39,9 +41,42 @@ Authorization: Bearer agentpay_<your-api-key>
 
 API keys are generated at registration and can be rotated (see below). The old key is invalidated immediately on rotation.
 
+### Agent Pairing Flow
+
+Agents cannot self-register. A human must initiate the pairing:
+
+1. Human calls `POST /auth/agents/pairing-token` (requires human JWT auth)
+2. Human gives the returned token to the agent
+3. Agent calls `POST /auth/register/agent` with the pairing token
+4. Agent is linked to the human account with spending limits set by the human
+5. Human can list agents (`GET /auth/agents`) and revoke access (`DELETE /auth/agents/:id`)
+
 ---
 
 ## Endpoints
+
+### Generate Pairing Token (Human Only)
+
+```
+POST /auth/agents/pairing-token
+```
+
+Requires human JWT auth. Creates a one-time pairing token for agent registration.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agentName` | string | No | Pre-set @username for the agent |
+| `dailyLimit` | number | No | Max USDC spend per day |
+| `txLimit` | number | No | Max USDC per transaction |
+
+**Response (201):**
+```json
+{
+  "pairingToken": "a1b2c3...",
+  "expiresAt": "2026-02-13T01:15:00.000Z",
+  "message": "Give this token to your AI agent. It expires in 15 minutes."
+}
+```
 
 ### Register Agent
 
@@ -49,18 +84,17 @@ API keys are generated at registration and can be rotated (see below). The old k
 POST /auth/register/agent
 ```
 
-No auth required. Creates an agent account with a Solana wallet.
+No auth required, but requires a valid pairing token from a human account.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `displayName` | string | Yes | Unique @username (1-50 chars) |
-| `dailyLimit` | number | No | Max USDC spend per day |
-| `txLimit` | number | No | Max USDC per transaction |
+| `pairingToken` | string | Yes | One-time token from human owner |
+| `displayName` | string | No | Unique @username (uses token's agentName if omitted) |
 
 ```bash
 curl -X POST http://localhost:3001/api/auth/register/agent \
   -H "Content-Type: application/json" \
-  -d '{"displayName": "my-agent", "dailyLimit": 500, "txLimit": 100}'
+  -d '{"pairingToken": "a1b2c3...", "displayName": "my-agent"}'
 ```
 
 **Response (201):**
@@ -70,12 +104,29 @@ curl -X POST http://localhost:3001/api/auth/register/agent \
     "id": "uuid",
     "type": "AGENT",
     "displayName": "my-agent",
-    "walletAddress": "So1ana..."
+    "walletAddress": "So1ana...",
+    "parentUserId": "human-uuid"
   },
   "apiKey": "agentpay_abc123...",
   "warning": "Save this API key now. It cannot be retrieved later."
 }
 ```
+
+### List My Agents (Human Only)
+
+```
+GET /auth/agents
+```
+
+Returns all agents linked to the authenticated human.
+
+### Revoke Agent (Human Only)
+
+```
+DELETE /auth/agents/:agentId
+```
+
+Invalidates the agent's API key. The agent can no longer authenticate.
 
 ---
 

@@ -18,6 +18,11 @@ model User {
   apiKey        String?  @unique // agents only
   apiKeyHash    String?  // hashed version for lookup
 
+  // Agent pairing: links agent to its human owner
+  parentUserId  String?  // human who created this agent (null for humans)
+  parent        User?    @relation("agentOwner", fields: [parentUserId], references: [id])
+  agents        User[]   @relation("agentOwner") // agents owned by this human
+
   // Spending controls
   dailyLimit    Float?   // max USDC per day (null = unlimited)
   txLimit       Float?   // max per single transaction
@@ -32,9 +37,11 @@ model User {
   webhooks      Webhook[]
   friendsAdded    Friendship[] @relation("friendAdder")
   friendsReceived Friendship[] @relation("friendTarget")
+  pairingTokens PairingToken[]
 
   @@index([type])
   @@index([apiKeyHash])
+  @@index([parentUserId])
 }
 
 model Wallet {
@@ -132,4 +139,19 @@ model Webhook {
   createdAt   DateTime @default(now())
 
   @@index([userId])
+}
+
+model PairingToken {
+  id          String   @id @default(uuid())
+  token       String   @unique // the actual token value
+  userId      String   // human who created it
+  user        User     @relation(fields: [userId], references: [id])
+  agentName   String?  // optional pre-set agent display name
+  dailyLimit  Float?   // spending limits set by human
+  txLimit     Float?
+  used        Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([token])
 }

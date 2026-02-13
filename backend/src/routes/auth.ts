@@ -3,8 +3,9 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { z } from 'zod';
-import { authenticate, generateApiKey, hashApiKey } from '../middleware/auth';
+import { authenticate, generateApiKey, hashApiKey, requireHuman } from '../middleware/auth';
 import { generateKeypair, encryptPrivateKey } from '../services/solana';
 import { AppError } from '../middleware/errorHandler';
 import { generateTotpSecret, verifyTotpToken, encryptSecret } from '../services/totp';
@@ -73,11 +74,82 @@ authRouter.post('/register/human', async (req: Request, res: Response) => {
   });
 });
 
-// === AGENT REGISTRATION ===
-const registerAgentSchema = z.object({
-  displayName: z.string().min(1).max(50),
+// === GENERATE AGENT PAIRING TOKEN (human only) ===
+const createPairingSchema = z.object({
+  agentName: z.string().min(1).max(50).optional(),
   dailyLimit: z.number().positive().optional(),
   txLimit: z.number().positive().optional(),
+});
+
+authRouter.post('/agents/pairing-token', authenticate, requireHuman, async (req: Request, res: Response) => {
+  const parsed = createPairingSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError('Invalid input: ' + parsed.error.issues[0].message, 400, 'VALIDATION_ERROR');
+  }
+
+  const { agentName, dailyLimit, txLimit } = parsed.data;
+  const token = crypto.randomBytes(32).toString('hex');
+
+  const pairingToken = await prisma.pairingToken.create({
+    data: {
+      token,
+      userId: req.user!.userId,
+      agentName: agentName?.replace(/^@/, '').trim(),
+      dailyLimit,
+      txLimit,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+    },
+  });
+
+  res.status(201).json({
+    pairingToken: token,
+    expiresAt: pairingToken.expiresAt,
+    message: 'Give this token to your AI agent. It expires in 15 minutes and can only be used once.',
+  });
+});
+
+// === LIST MY AGENTS (human only) ===
+authRouter.get('/agents', authenticate, requireHuman, async (req: Request, res: Response) => {
+  const agents = await prisma.user.findMany({
+    where: { parentUserId: req.user!.userId, type: 'AGENT' },
+    include: { wallet: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json({
+    agents: agents.map((a) => ({
+      id: a.id,
+      displayName: a.displayName,
+      walletAddress: a.wallet?.publicKey,
+      dailyLimit: a.dailyLimit,
+      txLimit: a.txLimit,
+      createdAt: a.createdAt,
+    })),
+  });
+});
+
+// === REVOKE AGENT (human only) ===
+authRouter.delete('/agents/:agentId', authenticate, requireHuman, async (req: Request, res: Response) => {
+  const agentId = String(req.params.agentId);
+
+  const agent = await prisma.user.findUnique({ where: { id: agentId } });
+  if (!agent || agent.parentUserId !== req.user!.userId) {
+    throw new AppError('Agent not found or not owned by you', 404, 'NOT_FOUND');
+  }
+
+  // Invalidate the agent's API key
+  await prisma.user.update({
+    where: { id: agentId },
+    data: { apiKey: null, apiKeyHash: null },
+  });
+
+  res.json({ message: `Agent @${agent.displayName} has been revoked.` });
+});
+
+// === AGENT REGISTRATION (requires pairing token) ===
+const registerAgentSchema = z.object({
+  pairingToken: z.string().min(1),
+  displayName: z.string().min(1).max(50).optional(),
 });
 
 authRouter.post('/register/agent', async (req: Request, res: Response) => {
@@ -86,8 +158,16 @@ authRouter.post('/register/agent', async (req: Request, res: Response) => {
     throw new AppError('Invalid input: ' + parsed.error.issues[0].message, 400, 'VALIDATION_ERROR');
   }
 
-  const { dailyLimit, txLimit } = parsed.data;
-  const displayName = parsed.data.displayName.replace(/^@/, '').trim();
+  const { pairingToken } = parsed.data;
+
+  // Validate pairing token
+  const tokenRecord = await prisma.pairingToken.findUnique({ where: { token: pairingToken } });
+  if (!tokenRecord) throw new AppError('Invalid pairing token', 401, 'INVALID_TOKEN');
+  if (tokenRecord.used) throw new AppError('Pairing token already used', 401, 'TOKEN_USED');
+  if (tokenRecord.expiresAt < new Date()) throw new AppError('Pairing token expired', 401, 'TOKEN_EXPIRED');
+
+  // Use agent name from token or from request body
+  const displayName = (parsed.data.displayName || tokenRecord.agentName || `agent-${Date.now()}`).replace(/^@/, '').trim();
 
   const nameTaken = await prisma.user.findUnique({ where: { displayName } });
   if (nameTaken) throw new AppError('That username is already taken', 409, 'DUPLICATE_NAME');
@@ -97,23 +177,31 @@ authRouter.post('/register/agent', async (req: Request, res: Response) => {
   const keypair = generateKeypair();
   const encryptedSecret = encryptPrivateKey(keypair.secretKey);
 
-  const user = await prisma.user.create({
-    data: {
-      type: 'AGENT',
-      displayName,
-      apiKey: apiKey.slice(0, 12) + '...',
-      apiKeyHash,
-      dailyLimit,
-      txLimit,
-      wallet: {
-        create: {
-          publicKey: keypair.publicKey.toBase58(),
-          encryptedSecret,
+  // Mark token as used and create agent in one transaction
+  const [, user] = await prisma.$transaction([
+    prisma.pairingToken.update({
+      where: { id: tokenRecord.id },
+      data: { used: true },
+    }),
+    prisma.user.create({
+      data: {
+        type: 'AGENT',
+        displayName,
+        apiKey: apiKey.slice(0, 12) + '...',
+        apiKeyHash,
+        parentUserId: tokenRecord.userId, // link to human owner
+        dailyLimit: tokenRecord.dailyLimit,
+        txLimit: tokenRecord.txLimit,
+        wallet: {
+          create: {
+            publicKey: keypair.publicKey.toBase58(),
+            encryptedSecret,
+          },
         },
       },
-    },
-    include: { wallet: true },
-  });
+      include: { wallet: true },
+    }),
+  ]);
 
   res.status(201).json({
     user: {
@@ -121,6 +209,7 @@ authRouter.post('/register/agent', async (req: Request, res: Response) => {
       type: user.type,
       displayName: user.displayName,
       walletAddress: user.wallet?.publicKey,
+      parentUserId: tokenRecord.userId,
     },
     apiKey,
     warning: 'Save this API key now. It cannot be retrieved later.',
