@@ -14,10 +14,14 @@ transferRouter.use(authenticate);
 
 // === REQUEST PAYMENT ===
 const requestSchema = z.object({
-  fromUserId: z.string().uuid(),
+  fromUserId: z.string().uuid().optional(),
+  fromUsername: z.string().max(50).optional(),
   amount: z.number().positive().max(1000000),
   memo: z.string().max(500).optional(),
-});
+}).refine(
+  (data) => data.fromUserId || data.fromUsername,
+  { message: 'Either fromUserId or fromUsername is required' }
+);
 
 transferRouter.post('/request', async (req: Request, res: Response) => {
   const parsed = requestSchema.safeParse(req.body);
@@ -25,17 +29,26 @@ transferRouter.post('/request', async (req: Request, res: Response) => {
     throw new AppError(parsed.error.issues[0].message, 400, 'VALIDATION_ERROR');
   }
 
-  const { fromUserId, amount, memo } = parsed.data;
+  const { fromUserId, fromUsername, amount, memo } = parsed.data;
   const requesterId = req.user!.userId;
 
-  if (fromUserId === requesterId) {
+  // Resolve username to userId if provided
+  let resolvedFromUserId = fromUserId;
+  if (!resolvedFromUserId && fromUsername) {
+    const name = fromUsername.replace(/^@/, '').trim();
+    const found = await prisma.user.findUnique({ where: { displayName: name } });
+    if (!found) throw new AppError(`User @${name} not found`, 404, 'USER_NOT_FOUND');
+    resolvedFromUserId = found.id;
+  }
+
+  if (resolvedFromUserId === requesterId) {
     throw new AppError('Cannot request money from yourself', 400, 'SELF_REQUEST');
   }
 
   // Verify both users exist
   const [requester, target] = await Promise.all([
     prisma.user.findUnique({ where: { id: requesterId }, include: { wallet: true } }),
-    prisma.user.findUnique({ where: { id: fromUserId }, include: { wallet: true } }),
+    prisma.user.findUnique({ where: { id: resolvedFromUserId! }, include: { wallet: true } }),
   ]);
 
   if (!requester?.wallet) throw new AppError('Your wallet not found', 404, 'WALLET_NOT_FOUND');
@@ -46,19 +59,19 @@ transferRouter.post('/request', async (req: Request, res: Response) => {
     data: {
       type: 'TRANSFER',
       status: 'PENDING',
-      senderId: fromUserId,     // who will pay
-      receiverId: requesterId,  // who requested
+      senderId: resolvedFromUserId!,  // who will pay
+      receiverId: requesterId,         // who requested
       amount,
       fee: 0,
       fromWallet: target.wallet.publicKey,
       toWallet: requester.wallet.publicKey,
-      memo: memo || `Payment request from ${requester.displayName}`,
+      memo: memo || `Payment request from @${requester.displayName}`,
       metadata: { isRequest: true, requestedBy: requesterId },
     },
   });
 
   // Notify target user
-  notifyUser(fromUserId, 'transaction.pending', {
+  notifyUser(resolvedFromUserId!, 'transaction.pending', {
     transactionId: tx.id,
     amount,
     requestedBy: requester.displayName,
@@ -75,6 +88,147 @@ transferRouter.post('/request', async (req: Request, res: Response) => {
       createdAt: tx.createdAt,
     },
   });
+});
+
+// === INCOMING PAYMENT REQUESTS ===
+transferRouter.get('/requests/incoming', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+
+  // Find PENDING transactions where current user is the sender (payer) and it's a request
+  const pendingRequests = await prisma.transaction.findMany({
+    where: {
+      senderId: userId,
+      status: 'PENDING',
+      type: 'TRANSFER',
+    },
+    include: {
+      receiver: { select: { id: true, displayName: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  // Filter for requests (metadata contains isRequest: true)
+  const requests = pendingRequests.filter((tx) => {
+    const meta = tx.metadata as Record<string, unknown> | null;
+    return meta && meta.isRequest === true;
+  });
+
+  res.json({
+    requests: requests.map((tx) => ({
+      id: tx.id,
+      amount: tx.amount,
+      requestedBy: tx.receiver,
+      memo: tx.memo,
+      createdAt: tx.createdAt,
+    })),
+  });
+});
+
+// === ACCEPT PAYMENT REQUEST ===
+transferRouter.post('/requests/:id/accept', async (req: Request, res: Response) => {
+  const txId = String(req.params.id);
+  const userId = req.user!.userId;
+
+  const tx = await prisma.transaction.findUnique({ where: { id: txId } });
+
+  if (!tx) throw new AppError('Request not found', 404, 'NOT_FOUND');
+  if (tx.status !== 'PENDING') throw new AppError('Request is no longer pending', 400, 'NOT_PENDING');
+
+  const meta = tx.metadata as Record<string, unknown> | null;
+  if (!meta || meta.isRequest !== true) {
+    throw new AppError('Transaction is not a payment request', 400, 'NOT_A_REQUEST');
+  }
+
+  if (tx.senderId !== userId) {
+    throw new AppError('Only the requested payer can accept this request', 403, 'FORBIDDEN');
+  }
+
+  // Fetch sender wallet to check balance
+  const senderWallet = await prisma.wallet.findUnique({ where: { userId: tx.senderId! } });
+  const receiverWallet = await prisma.wallet.findUnique({ where: { userId: tx.receiverId! } });
+
+  if (!senderWallet || !receiverWallet) {
+    throw new AppError('Wallet not found', 404, 'WALLET_NOT_FOUND');
+  }
+
+  if (senderWallet.usdcBalance < tx.amount) {
+    throw new AppError(
+      `Insufficient balance: ${senderWallet.usdcBalance} USDC available`,
+      400,
+      'INSUFFICIENT_BALANCE'
+    );
+  }
+
+  // Execute the payment: move cached balances + confirm transaction
+  await prisma.$transaction([
+    prisma.wallet.update({
+      where: { userId: tx.senderId! },
+      data: { usdcBalance: { decrement: tx.amount } },
+    }),
+    prisma.wallet.update({
+      where: { userId: tx.receiverId! },
+      data: { usdcBalance: { increment: tx.amount } },
+    }),
+    prisma.transaction.update({
+      where: { id: txId },
+      data: {
+        status: 'CONFIRMED',
+        solanaSignature: `request_accepted_${Date.now()}`,
+        confirmedAt: new Date(),
+      },
+    }),
+  ]);
+
+  // Notify both parties
+  notifyUser(tx.senderId!, 'transaction.confirmed', {
+    transactionId: tx.id,
+    amount: tx.amount,
+    direction: 'sent',
+    type: 'request_accepted',
+  });
+  notifyUser(tx.receiverId!, 'transaction.confirmed', {
+    transactionId: tx.id,
+    amount: tx.amount,
+    direction: 'received',
+    type: 'request_accepted',
+  });
+
+  res.json({ message: 'Payment request accepted', transactionId: tx.id });
+});
+
+// === DISMISS PAYMENT REQUEST ===
+transferRouter.post('/requests/:id/dismiss', async (req: Request, res: Response) => {
+  const txId = String(req.params.id);
+  const userId = req.user!.userId;
+
+  const tx = await prisma.transaction.findUnique({ where: { id: txId } });
+
+  if (!tx) throw new AppError('Request not found', 404, 'NOT_FOUND');
+  if (tx.status !== 'PENDING') throw new AppError('Request is no longer pending', 400, 'NOT_PENDING');
+
+  const meta = tx.metadata as Record<string, unknown> | null;
+  if (!meta || meta.isRequest !== true) {
+    throw new AppError('Transaction is not a payment request', 400, 'NOT_A_REQUEST');
+  }
+
+  if (tx.senderId !== userId) {
+    throw new AppError('Only the requested payer can dismiss this request', 403, 'FORBIDDEN');
+  }
+
+  await prisma.transaction.update({
+    where: { id: txId },
+    data: { status: 'CANCELLED' },
+  });
+
+  // Notify the requester that their request was dismissed
+  if (tx.receiverId) {
+    notifyUser(tx.receiverId, 'transaction.failed', {
+      transactionId: tx.id,
+      type: 'request_dismissed',
+    });
+  }
+
+  res.json({ message: 'Payment request dismissed', transactionId: tx.id });
 });
 
 // === WITHDRAW TO EXTERNAL WALLET ===
