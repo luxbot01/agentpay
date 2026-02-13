@@ -547,7 +547,16 @@ transferRouter.post('/send', async (req: Request, res: Response) => {
     }
 
     const { toUserId, toUsername, amount, memo } = parsed.data;
-    const senderId = req.user!.userId;
+    const authUserId = req.user!.userId;
+
+    // If caller is an agent, use parent's account for the transaction
+    const callerUser = await prisma.user.findUnique({ where: { id: authUserId } });
+    if (!callerUser) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+
+    const isAgent = callerUser.type === 'AGENT';
+    const effectiveSenderId = isAgent && callerUser.parentUserId
+      ? callerUser.parentUserId
+      : authUserId;
 
     // Resolve recipient
     let recipientId = toUserId;
@@ -558,20 +567,20 @@ transferRouter.post('/send', async (req: Request, res: Response) => {
       recipientId = found.id;
     }
 
-    if (recipientId === senderId) {
+    if (recipientId === effectiveSenderId) {
       throw new AppError('Cannot send money to yourself', 400, 'SELF_TRANSFER');
     }
 
-    // Get both wallets
+    // Get both wallets (using parent's wallet for agents)
     const [senderWallet, receiverWallet] = await Promise.all([
-      prisma.wallet.findUnique({ where: { userId: senderId } }),
+      prisma.wallet.findUnique({ where: { userId: effectiveSenderId } }),
       prisma.wallet.findUnique({ where: { userId: recipientId! } }),
     ]);
 
     if (!senderWallet) throw new AppError('Your wallet not found', 404, 'WALLET_NOT_FOUND');
     if (!receiverWallet) throw new AppError('Recipient wallet not found', 404, 'RECEIVER_NOT_FOUND');
 
-    // Check cached balance
+    // Check cached balance (parent's balance for agents)
     if (senderWallet.usdcBalance < amount) {
       throw new AppError(
         `Insufficient balance: ${senderWallet.usdcBalance} USDC available`,
@@ -580,16 +589,38 @@ transferRouter.post('/send', async (req: Request, res: Response) => {
       );
     }
 
-    // Check spending limits
-    const senderUser = await prisma.user.findUnique({ where: { id: senderId } });
-    if (senderUser?.txLimit && amount > senderUser.txLimit) {
-      throw new AppError(`Amount exceeds per-transaction limit of ${senderUser.txLimit} USDC`, 403, 'TX_LIMIT_EXCEEDED');
+    // Check agent's spending limits (not parent's)
+    if (callerUser.txLimit && amount > callerUser.txLimit) {
+      throw new AppError(`Amount exceeds per-transaction limit of ${callerUser.txLimit} USDC`, 403, 'TX_LIMIT_EXCEEDED');
     }
+
+    if (callerUser.dailyLimit) {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const dailyTotal = await prisma.transaction.aggregate({
+        where: {
+          senderId: effectiveSenderId,
+          type: 'TRANSFER',
+          status: 'CONFIRMED',
+          createdAt: { gte: dayStart },
+          metadata: { path: ['initiatedByAgent'], equals: callerUser.displayName },
+        },
+        _sum: { amount: true },
+      });
+      if ((dailyTotal._sum.amount || 0) + amount > callerUser.dailyLimit) {
+        throw new AppError('Daily spending limit exceeded', 403, 'DAILY_LIMIT_EXCEEDED');
+      }
+    }
+
+    // Build metadata (track which agent initiated the transaction)
+    const txMetadata = isAgent
+      ? { initiatedByAgent: callerUser.displayName, agentId: authUserId }
+      : undefined;
 
     // Move cached balances + create transaction record in a single operation
     const [, , tx] = await prisma.$transaction([
       prisma.wallet.update({
-        where: { userId: senderId },
+        where: { userId: effectiveSenderId },
         data: { usdcBalance: { decrement: amount } },
       }),
       prisma.wallet.update({
@@ -600,21 +631,22 @@ transferRouter.post('/send', async (req: Request, res: Response) => {
         data: {
           type: 'TRANSFER',
           status: 'CONFIRMED',
-          senderId,
+          senderId: effectiveSenderId,
           receiverId: recipientId,
           amount,
           fee: 0,
           fromWallet: senderWallet.publicKey,
           toWallet: receiverWallet.publicKey,
-          memo,
+          memo: isAgent ? (memo || `Sent by @${callerUser.displayName}`) : memo,
+          metadata: txMetadata ? JSON.parse(JSON.stringify(txMetadata)) : undefined,
           solanaSignature: `demo_${Date.now()}`,
           confirmedAt: new Date(),
         },
       }),
     ]);
 
-    // Notify both parties
-    notifyUser(senderId, 'transaction.confirmed', { transactionId: tx.id, amount, direction: 'sent' });
+    // Notify both parties (notify the parent, not the agent)
+    notifyUser(effectiveSenderId, 'transaction.confirmed', { transactionId: tx.id, amount, direction: 'sent' });
     notifyUser(recipientId!, 'transaction.confirmed', { transactionId: tx.id, amount, direction: 'received' });
 
     res.status(201).json({
@@ -628,6 +660,7 @@ transferRouter.post('/send', async (req: Request, res: Response) => {
         createdAt: tx.createdAt,
         confirmedAt: tx.confirmedAt,
         demo: true,
+        ...(isAgent && { initiatedBy: callerUser.displayName }),
       },
     });
   });
