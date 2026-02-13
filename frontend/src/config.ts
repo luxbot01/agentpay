@@ -1,4 +1,5 @@
 // API Configuration
-// For GitHub Pages deployment, set VITE_API_URL in your .env file
-// For local development, uses Vite proxy (empty string means same origin)
-export const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+// In production (GitHub Pages), point to Render backend
+// In local dev, uses Vite proxy (empty string = same origin)
+const PRODUCTION_API = 'https://agentpay-backend.onrender.com'
+export const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? PRODUCTION_API : '')
