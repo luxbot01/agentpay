@@ -463,7 +463,7 @@ function App() {
       await apiFetch('/transfers/request', {
         method: 'POST',
         body: JSON.stringify({
-          fromUserId: requestFrom,
+          fromUsername: requestFrom,
           amount: parseFloat(requestAmount),
           memo: requestMemo || undefined
         })
@@ -1426,8 +1426,8 @@ function App() {
             {error && <div className="bg-red-100 text-red-600 p-3 rounded-lg mb-4 text-sm">{error}</div>}
             <form onSubmit={handleRequest} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-twitter-gray mb-1">From (User ID)</label>
-                <input type="text" value={requestFrom} onChange={(e) => setRequestFrom(e.target.value)} placeholder="User ID to request from" className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue" required />
+                <label className="block text-sm font-medium text-twitter-gray mb-1">From (@username)</label>
+                <input type="text" value={requestFrom} onChange={(e) => setRequestFrom(e.target.value)} placeholder="@username to request from" className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-twitter-gray mb-1">Amount (USDC)</label>
