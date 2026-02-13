@@ -15,6 +15,15 @@ interface Transaction {
   createdAt: string
   status: string
   memo?: string
+  metadata?: { isRequest?: boolean; requestedBy?: string } | null
+}
+
+interface IncomingRequest {
+  id: string
+  amount: number
+  requestedBy: { id: string; displayName: string }
+  memo?: string
+  createdAt: string
 }
 
 interface User {
@@ -66,6 +75,7 @@ function App() {
   
   // Data state
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([])
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -117,6 +127,7 @@ function App() {
       fetchUser()
       fetchWallet()
       fetchTransactions()
+      fetchIncomingRequests()
       fetchBankAccounts()
       fetchFriends()
       fetchFriendRequests()
@@ -215,6 +226,41 @@ function App() {
       setTransactions(data.transactions || [])
     } catch (err) {
       console.error('Failed to fetch transactions:', err)
+    }
+  }
+
+  const fetchIncomingRequests = async () => {
+    try {
+      const data = await apiFetch('/transfers/requests/incoming')
+      setIncomingRequests(data.requests || [])
+    } catch (err) {
+      console.error('Failed to fetch incoming requests:', err)
+    }
+  }
+
+  const handleAcceptRequest = async (requestId: string) => {
+    setLoading(true)
+    setError(null)
+    try {
+      await apiFetch(`/transfers/requests/${requestId}/accept`, { method: 'POST' })
+      await Promise.all([fetchWallet(), fetchTransactions(), fetchIncomingRequests()])
+    } catch (err: any) {
+      setError(err.message || 'Failed to accept request')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDismissRequest = async (requestId: string) => {
+    setLoading(true)
+    setError(null)
+    try {
+      await apiFetch(`/transfers/requests/${requestId}/dismiss`, { method: 'POST' })
+      await Promise.all([fetchTransactions(), fetchIncomingRequests()])
+    } catch (err: any) {
+      setError(err.message || 'Failed to dismiss request')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -649,6 +695,8 @@ function App() {
     }).format(new Date(dateStr))
   }
 
+  const isRequest = (tx: Transaction) => tx.metadata?.isRequest === true
+
   const getDisplayType = (tx: Transaction) => {
     if (tx.type === 'DEPOSIT') return 'deposit'
     if (tx.type === 'WITHDRAW') return 'withdraw'
@@ -656,6 +704,8 @@ function App() {
   }
 
   const getTransactionIcon = (tx: Transaction) => {
+    if (isRequest(tx) && tx.status === 'PENDING') return '⏳'
+    if (isRequest(tx) && tx.status === 'CANCELLED') return '✕'
     const dt = getDisplayType(tx)
     switch (dt) {
       case 'received': return '↓'
@@ -667,6 +717,8 @@ function App() {
   }
 
   const getTransactionColor = (tx: Transaction) => {
+    if (isRequest(tx) && tx.status === 'PENDING') return 'bg-yellow-500'
+    if (isRequest(tx) && tx.status === 'CANCELLED') return 'bg-gray-400'
     const dt = getDisplayType(tx)
     switch (dt) {
       case 'received': return 'bg-green-500'
@@ -678,6 +730,22 @@ function App() {
   }
 
   const getTransactionLabel = (tx: Transaction) => {
+    if (isRequest(tx)) {
+      if (tx.status === 'PENDING') {
+        return tx.direction === 'sent'
+          ? `Request from @${tx.receiver?.displayName || 'Unknown'}`
+          : `Requested from @${tx.sender?.displayName || 'Unknown'}`
+      }
+      if (tx.status === 'CANCELLED') {
+        return tx.direction === 'sent'
+          ? `Dismissed request from @${tx.receiver?.displayName || 'Unknown'}`
+          : `Request dismissed by @${tx.sender?.displayName || 'Unknown'}`
+      }
+      // CONFIRMED request = paid
+      return tx.direction === 'sent'
+        ? `Paid request to @${tx.receiver?.displayName || 'Unknown'}`
+        : `Received (requested) from @${tx.sender?.displayName || 'Unknown'}`
+    }
     const dt = getDisplayType(tx)
     switch (dt) {
       case 'received': return `From @${tx.sender?.displayName || 'Unknown'}`
@@ -688,7 +756,17 @@ function App() {
     }
   }
 
+  const getStatusBadge = (tx: Transaction) => {
+    if (!isRequest(tx)) return null
+    if (tx.status === 'PENDING') return { text: 'Pending', color: 'bg-yellow-100 text-yellow-700' }
+    if (tx.status === 'CANCELLED') return { text: 'Dismissed', color: 'bg-gray-100 text-gray-500' }
+    return { text: 'Paid', color: 'bg-green-100 text-green-700' }
+  }
+
   const isPositive = (tx: Transaction) => {
+    // Pending requests haven't moved money yet
+    if (isRequest(tx) && tx.status === 'PENDING') return false
+    if (isRequest(tx) && tx.status === 'CANCELLED') return false
     const dt = getDisplayType(tx)
     return dt === 'received' || dt === 'deposit'
   }
@@ -984,6 +1062,47 @@ function App() {
               </button>
             </div>
 
+            {/* Incoming Payment Requests */}
+            {incomingRequests.length > 0 && (
+              <div className="bg-white rounded-xl border-2 border-yellow-400 mb-6">
+                <div className="p-4 border-b border-yellow-200 bg-yellow-50 rounded-t-xl">
+                  <h2 className="font-bold text-yellow-800">Payment Requests ({incomingRequests.length})</h2>
+                </div>
+                <div className="divide-y divide-yellow-100">
+                  {incomingRequests.map(req => (
+                    <div key={req.id} className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <div className="font-semibold text-twitter-black">
+                            @{req.requestedBy.displayName} requested {formatBalance(req.amount)}
+                          </div>
+                          {req.memo && <div className="text-sm text-twitter-gray">{req.memo}</div>}
+                          <div className="text-xs text-twitter-gray mt-1">{formatTime(req.createdAt)}</div>
+                        </div>
+                        <div className="font-bold text-yellow-600">{formatBalance(req.amount)}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleAcceptRequest(req.id)}
+                          disabled={loading}
+                          className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 rounded-full text-sm font-semibold transition-colors disabled:opacity-50"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          onClick={() => handleDismissRequest(req.id)}
+                          disabled={loading}
+                          className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 rounded-full text-sm font-semibold transition-colors disabled:opacity-50"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Transaction History */}
             <div className="bg-white rounded-xl border border-twitter-gray-lighter">
               <div className="p-4 border-b border-twitter-gray-lighter flex justify-between items-center">
@@ -991,7 +1110,7 @@ function App() {
                 <button
                   onClick={async () => {
                     setRefreshing(true)
-                    await Promise.all([fetchWallet(), fetchTransactions()])
+                    await Promise.all([fetchWallet(), fetchTransactions(), fetchIncomingRequests()])
                     setRefreshing(false)
                   }}
                   disabled={refreshing}
@@ -1014,25 +1133,31 @@ function App() {
                     <p className="text-sm mt-1">Send or receive money to get started</p>
                   </div>
                 ) : (
-                  transactions.map(tx => (
-                    <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-twitter-gray-lightest transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getTransactionColor(tx)}`}>
-                          {getTransactionIcon(tx)}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-twitter-black">
-                            {getTransactionLabel(tx)}
+                  transactions.map(tx => {
+                    const badge = getStatusBadge(tx)
+                    const isPending = isRequest(tx) && tx.status === 'PENDING'
+                    const isDismissed = isRequest(tx) && tx.status === 'CANCELLED'
+                    return (
+                      <div key={tx.id} className={`p-4 flex items-center justify-between hover:bg-twitter-gray-lightest transition-colors ${isDismissed ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getTransactionColor(tx)}`}>
+                            {getTransactionIcon(tx)}
                           </div>
-                          <div className="text-sm text-twitter-gray">{formatTime(tx.createdAt)}</div>
-                          {tx.memo && <div className="text-xs text-twitter-gray-light">{tx.memo}</div>}
+                          <div>
+                            <div className="font-semibold text-twitter-black flex items-center gap-2">
+                              {getTransactionLabel(tx)}
+                              {badge && <span className={`text-xs px-2 py-0.5 rounded-full ${badge.color}`}>{badge.text}</span>}
+                            </div>
+                            <div className="text-sm text-twitter-gray">{formatTime(tx.createdAt)}</div>
+                            {tx.memo && <div className="text-xs text-twitter-gray-light">{tx.memo}</div>}
+                          </div>
+                        </div>
+                        <div className={`font-bold ${isPending || isDismissed ? 'text-gray-400' : isPositive(tx) ? 'text-green-600' : 'text-twitter-black'}`}>
+                          {isPending || isDismissed ? '' : isPositive(tx) ? '+' : '-'}{formatBalance(tx.amount)}
                         </div>
                       </div>
-                      <div className={`font-bold ${isPositive(tx) ? 'text-green-600' : 'text-twitter-black'}`}>
-                        {isPositive(tx) ? '+' : '-'}{formatBalance(tx.amount)}
-                      </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
             </div>
