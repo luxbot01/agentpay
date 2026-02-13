@@ -83,10 +83,22 @@ const depositSchema = z.object({
   amount: z.number().positive().max(10000).default(10),
 });
 
-walletRouter.post('/deposit', requireHuman, async (req: Request, res: Response) => {
+walletRouter.post('/deposit', async (req: Request, res: Response) => {
   const parsed = depositSchema.safeParse(req.body);
   const amount = parsed.success ? parsed.data.amount : 10;
-  const userId = req.user!.userId;
+  const authUserId = req.user!.userId;
+
+  // If caller is an agent, deposit into parent's wallet (dev mode only)
+  const callerUser = await prisma.user.findUnique({ where: { id: authUserId } });
+  if (!callerUser) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+
+  if (callerUser.type === 'AGENT' && process.env.NODE_ENV === 'production') {
+    throw new AppError('Agents cannot deposit in production', 403, 'HUMAN_ONLY');
+  }
+
+  const userId = (callerUser.type === 'AGENT' && callerUser.parentUserId)
+    ? callerUser.parentUserId
+    : authUserId;
 
   const wallet = await prisma.wallet.findUnique({ where: { userId } });
   if (!wallet) throw new AppError('Wallet not found', 404, 'WALLET_NOT_FOUND');
