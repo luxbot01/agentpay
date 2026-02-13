@@ -40,10 +40,6 @@ interface BankAccount {
   createdAt: string
 }
 
-interface AuthResponse {
-  token: string
-  user: User
-}
 
 function App() {
   // Auth state
