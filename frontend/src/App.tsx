@@ -82,7 +82,10 @@ function App() {
   const [sendSearchResults, setSendSearchResults] = useState<Array<{id: string, displayName: string, type: string}>>([])
   const [sendAmount, setSendAmount] = useState('')
   const [sendMemo, setSendMemo] = useState('')
-  const [requestFrom, setRequestFrom] = useState('')
+  const [requestRecipient, setRequestRecipient] = useState('')
+  const [requestRecipientName, setRequestRecipientName] = useState('')
+  const [requestSearch, setRequestSearch] = useState('')
+  const [requestSearchResults, setRequestSearchResults] = useState<Array<{id: string, displayName: string, type: string}>>([])
   const [requestAmount, setRequestAmount] = useState('')
   const [requestMemo, setRequestMemo] = useState('')
   const [depositAmount, setDepositAmount] = useState('10')
@@ -146,6 +149,21 @@ function App() {
     }, 300)
     return () => clearTimeout(timer)
   }, [sendSearch])
+
+  // Debounced search (request modal)
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (requestSearch.trim() && !requestRecipient) {
+        try {
+          const data = await apiFetch(`/users/search/query?q=${encodeURIComponent(requestSearch)}&limit=5`)
+          setRequestSearchResults((data.users || []).filter((u: any) => u.id !== user?.id))
+        } catch { setRequestSearchResults([]) }
+      } else {
+        setRequestSearchResults([])
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [requestSearch])
 
   // API calls
   const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
