@@ -238,7 +238,7 @@ function App() {
     }
   }
 
-  const handleAcceptRequest = async (requestId: string) => {
+  const handleAcceptPaymentRequest = async (requestId: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -251,7 +251,7 @@ function App() {
     }
   }
 
-  const handleDismissRequest = async (requestId: string) => {
+  const handleDismissPaymentRequest = async (requestId: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -1083,14 +1083,14 @@ function App() {
                       </div>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => handleAcceptRequest(req.id)}
+                          onClick={() => handleAcceptPaymentRequest(req.id)}
                           disabled={loading}
                           className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 rounded-full text-sm font-semibold transition-colors disabled:opacity-50"
                         >
                           Accept
                         </button>
                         <button
-                          onClick={() => handleDismissRequest(req.id)}
+                          onClick={() => handleDismissPaymentRequest(req.id)}
                           disabled={loading}
                           className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 rounded-full text-sm font-semibold transition-colors disabled:opacity-50"
                         >
