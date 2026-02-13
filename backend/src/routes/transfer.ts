@@ -528,8 +528,8 @@ transferRouter.post('/send', async (req: Request, res: Response) => {
   }
 });
 
-// === DEMO SEND (dev mode only - moves cached balances, no blockchain) ===
-if (process.env.NODE_ENV !== 'production') {
+// === DEMO SEND (cached balance transfer, no blockchain) ===
+{
   const demoSendSchema = z.object({
     toUserId: z.string().uuid().optional(),
     toUsername: z.string().max(50).optional(),

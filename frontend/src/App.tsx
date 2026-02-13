@@ -509,8 +509,8 @@ function App() {
         body.toUsername = sendSearch.trim()
       }
 
-      // Use demo-send in dev mode (cached balances), real send in production
-      const endpoint = import.meta.env.DEV ? '/transfers/demo-send' : '/transfers/send'
+      // Use demo-send for cached balance transfers (devnet - no gas fees needed)
+      const endpoint = '/transfers/demo-send'
       await apiFetch(endpoint, {
         method: 'POST',
         body: JSON.stringify(body)
