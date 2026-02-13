@@ -474,20 +474,28 @@ function App() {
 
   const handleRequest = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!requestFrom || !requestAmount) return
+    if ((!requestRecipient && !requestSearch.trim()) || !requestAmount) return
     setLoading(true)
     setError(null)
     try {
+      const body: any = {
+        amount: parseFloat(requestAmount),
+        memo: requestMemo || undefined
+      }
+      if (requestRecipient) {
+        body.fromUserId = requestRecipient
+      } else {
+        body.fromUsername = requestSearch.trim()
+      }
       await apiFetch('/transfers/request', {
         method: 'POST',
-        body: JSON.stringify({
-          fromUsername: requestFrom,
-          amount: parseFloat(requestAmount),
-          memo: requestMemo || undefined
-        })
+        body: JSON.stringify(body)
       })
       await fetchTransactions()
-      setRequestFrom('')
+      setRequestRecipient('')
+      setRequestRecipientName('')
+      setRequestSearch('')
+      setRequestSearchResults([])
       setRequestAmount('')
       setRequestMemo('')
       setShowRequestModal(false)
@@ -1443,9 +1451,37 @@ function App() {
             </div>
             {error && <div className="bg-red-100 text-red-600 p-3 rounded-lg mb-4 text-sm">{error}</div>}
             <form onSubmit={handleRequest} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-twitter-gray mb-1">From (@username)</label>
-                <input type="text" value={requestFrom} onChange={(e) => setRequestFrom(e.target.value)} placeholder="@username to request from" className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue" required />
+              <div className="relative">
+                <label className="block text-sm font-medium text-twitter-gray mb-1">From</label>
+                {requestRecipient ? (
+                  <div className="flex items-center gap-2 p-3 border border-twitter-blue bg-twitter-blue/5 rounded-lg">
+                    <span className="font-semibold text-twitter-blue">@{requestRecipientName}</span>
+                    <button type="button" onClick={() => { setRequestRecipient(''); setRequestRecipientName(''); setRequestSearch('') }} className="ml-auto text-twitter-gray hover:text-red-500 text-sm">Clear</button>
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={requestSearch}
+                    onChange={(e) => setRequestSearch(e.target.value)}
+                    placeholder="@username"
+                    className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue"
+                  />
+                )}
+                {requestSearchResults.length > 0 && !requestRecipient && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-twitter-gray-lighter rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
+                    {requestSearchResults.map(u => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => { setRequestRecipient(u.id); setRequestRecipientName(u.displayName); setRequestSearchResults([]) }}
+                        className="w-full text-left px-4 py-3 hover:bg-twitter-gray-lightest flex items-center justify-between"
+                      >
+                        <span className="font-semibold">@{u.displayName}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${u.type === 'HUMAN' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>{u.type}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-twitter-gray mb-1">Amount (USDC)</label>
