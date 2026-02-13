@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: agentpay-backend
+    runtime: node
+    plan: free
+    buildCommand: ./render-build.sh
+    startCommand: ./render-start.sh
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agentpay-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BANK_ENCRYPTION_KEY
+        generateValue: true
+      - key: RESEND_API_KEY
+        sync: false  # You'll set this manually in Render dashboard
+
+databases:
+  - name: agentpay-db
+    plan: free
+    databaseName: agentpay
+    user: agentpay
