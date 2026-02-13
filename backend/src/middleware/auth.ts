@@ -85,3 +85,19 @@ export function requireType(type: 'HUMAN' | 'AGENT') {
     next();
   };
 }
+
+// Require human authentication (blocks agents from sensitive endpoints)
+export function requireHuman(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+  if (req.user.type !== 'HUMAN') {
+    res.status(403).json({
+      error: 'This endpoint is restricted to human users. Agents cannot access deposits, withdrawals, or bank management.',
+      code: 'HUMAN_ONLY',
+    });
+    return;
+  }
+  next();
+}

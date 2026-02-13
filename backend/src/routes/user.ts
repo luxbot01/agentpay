@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireHuman } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 
 const prisma = new PrismaClient();
@@ -23,7 +23,7 @@ userRouter.get('/me', async (req: Request, res: Response) => {
     type: user.type,
     email: user.email,
     displayName: user.displayName,
-    emailVerified: user.emailVerified,
+    totpEnabled: user.totpEnabled,
     dailyLimit: user.dailyLimit,
     txLimit: user.txLimit,
     walletAddress: user.wallet?.publicKey,
@@ -39,7 +39,7 @@ const updateSchema = z.object({
   txLimit: z.number().positive().nullable().optional(),
 });
 
-userRouter.patch('/me', async (req: Request, res: Response) => {
+userRouter.patch('/me', requireHuman, async (req: Request, res: Response) => {
   const parsed = updateSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');

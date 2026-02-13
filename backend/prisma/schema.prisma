@@ -13,7 +13,8 @@ model User {
   email         String?  @unique // humans only
   passwordHash  String?  // humans only
   displayName   String   @unique
-  emailVerified Boolean  @default(false)
+  totpSecret    String?  // AES-256-CBC encrypted TOTP secret
+  totpEnabled   Boolean  @default(false)
   apiKey        String?  @unique // agents only
   apiKeyHash    String?  // hashed version for lookup
 
@@ -31,7 +32,6 @@ model User {
   webhooks      Webhook[]
   friendsAdded    Friendship[] @relation("friendAdder")
   friendsReceived Friendship[] @relation("friendTarget")
-  verificationCodes VerificationCode[]
 
   @@index([type])
   @@index([apiKeyHash])
@@ -103,19 +103,6 @@ model BankAccount {
   isDefault              Boolean  @default(false)
   isActive               Boolean  @default(true)
   createdAt              DateTime @default(now())
-
-  @@index([userId])
-}
-
-model VerificationCode {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  code      String   // bcrypt-hashed 6-digit code
-  type      String   // EMAIL_VERIFY or PASSWORD_RESET
-  expiresAt DateTime
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now())
 
   @@index([userId])
 }

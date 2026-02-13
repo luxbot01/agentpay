@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireHuman } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { encryptBankField, getLast4 } from '../services/bankCrypto';
 
@@ -9,6 +9,7 @@ const prisma = new PrismaClient();
 export const bankRouter = Router();
 
 bankRouter.use(authenticate);
+bankRouter.use(requireHuman); // All bank operations are human-only
 
 // === CONNECT BANK ACCOUNT ===
 const connectSchema = z.object({

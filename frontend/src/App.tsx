@@ -59,13 +59,12 @@ function App() {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false)
   const [showBankModal, setShowBankModal] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
-  const [showVerifyEmail, setShowVerifyEmail] = useState(false)
-  const [verifyCode, setVerifyCode] = useState('')
-  const [forgotPasswordStep, setForgotPasswordStep] = useState<'none' | 'email' | 'code' | 'done'>('none')
-  const [resetEmail, setResetEmail] = useState('')
-  const [resetCode, setResetCode] = useState('')
-  const [resetNewPassword, setResetNewPassword] = useState('')
-  const [devCode, setDevCode] = useState<string | null>(null)
+  const [show2FASetup, setShow2FASetup] = useState(false)
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null)
+  const [totpManualSecret, setTotpManualSecret] = useState<string | null>(null)
+  const [totpCode, setTotpCode] = useState('')
+  const [requiresTotpCode, setRequiresTotpCode] = useState(false)
+  const [tempToken, setTempToken] = useState<string | null>(null)
   
   // Data state
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -178,9 +177,6 @@ function App() {
     try {
       const data = await apiFetch('/users/me')
       setUser(data)
-      if (data.emailVerified === false) {
-        setShowVerifyEmail(true)
-      }
     } catch (err) {
       console.error('Failed to fetch user:', err)
     }
@@ -308,14 +304,90 @@ function App() {
         body: JSON.stringify({ email: loginEmail, password: loginPassword })
       })
 
-      localStorage.setItem('agentpay_token', data.token)
-      setToken(data.token)
-      setUser(data.user)
-      if (!data.user.emailVerified) {
-        setShowVerifyEmail(true)
+      if (data.requiresTotpSetup) {
+        // First login — need to set up 2FA
+        localStorage.setItem('agentpay_token', data.token)
+        setToken(data.token)
+        setUser(data.user)
+        await setup2FA(data.token)
+      } else if (data.requiresTotpCode) {
+        // 2FA enabled — need code
+        setRequiresTotpCode(true)
+        setTempToken(data.tempToken)
       }
     } catch (err: any) {
       setError(err.message || 'Login failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const setup2FA = async (authToken?: string) => {
+    try {
+      const t = authToken || token
+      const res = await fetch('/api/auth/totp/setup', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to setup 2FA')
+      }
+      const data = await res.json()
+      setQrCodeUrl(data.qrCodeDataUrl)
+      setTotpManualSecret(data.secret)
+      setShow2FASetup(true)
+    } catch (err: any) {
+      setError(err.message || '2FA setup failed')
+    }
+  }
+
+  const verify2FASetup = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await apiFetch('/auth/totp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ code: totpCode }),
+      })
+      localStorage.setItem('agentpay_token', data.token)
+      setToken(data.token)
+      setUser(data.user)
+      setShow2FASetup(false)
+      setTotpCode('')
+      setQrCodeUrl(null)
+      setTotpManualSecret(null)
+      await Promise.all([fetchWallet(), fetchTransactions(), fetchBankAccounts(), fetchFriends(), fetchFriendRequests()])
+    } catch (err: any) {
+      setError(err.message || 'Invalid code')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const verify2FALogin = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/auth/totp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: totpCode, tempToken }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Invalid code')
+      }
+      const data = await res.json()
+      localStorage.setItem('agentpay_token', data.token)
+      setToken(data.token)
+      setUser(data.user)
+      setRequiresTotpCode(false)
+      setTempToken(null)
+      setTotpCode('')
+      await Promise.all([fetchWallet(), fetchTransactions(), fetchBankAccounts(), fetchFriends(), fetchFriendRequests()])
+    } catch (err: any) {
+      setError(err.message || 'Invalid code')
     } finally {
       setLoading(false)
     }
@@ -339,8 +411,9 @@ function App() {
       localStorage.setItem('agentpay_token', data.token)
       setToken(data.token)
       setUser(data.user)
-      setShowVerifyEmail(true)
-      if (data.devCode) setDevCode(data.devCode)
+      if (data.requiresTotpSetup) {
+        await setup2FA(data.token)
+      }
     } catch (err: any) {
       setError(err.message || 'Registration failed')
     } finally {
@@ -537,78 +610,12 @@ function App() {
     setUser(null)
     setWallet(null)
     setTransactions([])
-    setShowVerifyEmail(false)
-    setForgotPasswordStep('none')
+    setShow2FASetup(false)
+    setRequiresTotpCode(false)
+    setTempToken(null)
+    setTotpCode('')
   }
 
-  const handleVerifyEmail = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    try {
-      await apiFetch('/auth/verify-email', {
-        method: 'POST',
-        body: JSON.stringify({ code: verifyCode })
-      })
-      setShowVerifyEmail(false)
-      setVerifyCode('')
-      setDevCode(null)
-      if (user) setUser({ ...user, emailVerified: true } as any)
-    } catch (err: any) {
-      setError(err.message || 'Verification failed')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleResendCode = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await apiFetch('/auth/resend-verification', { method: 'POST' })
-      if (data.devCode) setDevCode(data.devCode)
-    } catch (err: any) {
-      setError(err.message || 'Failed to resend code')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleForgotPassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await apiFetch('/auth/forgot-password', {
-        method: 'POST',
-        body: JSON.stringify({ email: resetEmail })
-      })
-      if (data.devCode) setDevCode(data.devCode)
-      setForgotPasswordStep('code')
-    } catch (err: any) {
-      setError(err.message || 'Failed to send reset code')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    try {
-      await apiFetch('/auth/reset-password', {
-        method: 'POST',
-        body: JSON.stringify({ email: resetEmail, code: resetCode, newPassword: resetNewPassword })
-      })
-      setForgotPasswordStep('done')
-      setDevCode(null)
-    } catch (err: any) {
-      setError(err.message || 'Reset failed')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   // Helpers
   const formatBalance = (amount: number) => {
@@ -671,9 +678,8 @@ function App() {
     return dt === 'received' || dt === 'deposit'
   }
 
-  // If not logged in, show auth modal
-  // Email verification screen
-  if (token && showVerifyEmail) {
+  // 2FA Setup Modal (after registration or first login)
+  if (show2FASetup) {
     return (
       <div className="min-h-screen bg-twitter-gray-lightest flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
@@ -682,55 +688,52 @@ function App() {
               <img src="/logo.svg" alt="AgentPay" className="w-10 h-10" />
               <h1 className="text-3xl font-semibold text-twitter-blue tracking-tight" style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>AgentPay</h1>
             </div>
-            <p className="text-twitter-gray">Verify Your Email</p>
+            <p className="text-twitter-gray">Set Up Two-Factor Authentication</p>
           </div>
-          <p className="text-center text-twitter-gray mb-6 text-sm">
-            Enter the 6-digit verification code to verify your account.
+          <p className="text-center text-twitter-gray mb-4 text-sm">
+            Scan this QR code with Google Authenticator (or any TOTP app), then enter the 6-digit code to verify.
           </p>
-          {devCode && (
-            <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 p-3 rounded-lg mb-4 text-sm text-center">
-              <div className="text-xs font-semibold mb-1">DEV MODE - Your code:</div>
-              <div className="text-2xl font-bold font-mono tracking-widest">{devCode}</div>
+          {qrCodeUrl && (
+            <div className="flex justify-center mb-4">
+              <img src={qrCodeUrl} alt="2FA QR Code" className="w-48 h-48 rounded-lg border border-twitter-gray-lighter" />
+            </div>
+          )}
+          {totpManualSecret && (
+            <div className="bg-twitter-gray-lightest p-3 rounded-lg mb-4 text-center">
+              <div className="text-xs text-twitter-gray mb-1">Manual entry key:</div>
+              <div className="font-mono text-sm font-bold tracking-wider select-all break-all">{totpManualSecret}</div>
             </div>
           )}
           {error && <div className="bg-red-100 text-red-600 p-3 rounded-lg mb-4 text-sm">{error}</div>}
-          <form onSubmit={handleVerifyEmail} className="space-y-4">
-            <div>
-              <input
-                type="text"
-                value={verifyCode}
-                onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000"
-                maxLength={6}
-                className="w-full p-4 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue text-center text-3xl font-bold tracking-widest font-mono"
-                required
-              />
-            </div>
+          <div className="space-y-4">
+            <input
+              type="text"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="000000"
+              maxLength={6}
+              className="w-full p-4 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue text-center text-3xl font-bold tracking-widest font-mono"
+            />
             <button
-              type="submit"
-              disabled={loading || verifyCode.length !== 6}
+              onClick={verify2FASetup}
+              disabled={loading || totpCode.length !== 6}
               className="w-full bg-twitter-blue hover:bg-twitter-blue-dark text-white py-3 rounded-full font-semibold transition-colors disabled:opacity-50"
             >
-              {loading ? 'Verifying...' : 'Verify Email'}
+              {loading ? 'Verifying...' : 'Verify & Enable 2FA'}
             </button>
-          </form>
-          <div className="mt-4 text-center space-y-2">
-            <button onClick={handleResendCode} disabled={loading} className="text-twitter-blue text-sm hover:underline disabled:opacity-50">
-              Resend Code
-            </button>
-            <div>
-              <button onClick={handleLogout} className="text-twitter-gray text-sm hover:underline">
-                Use a different account
-              </button>
-            </div>
+          </div>
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-xs text-yellow-800 text-center font-medium">
+              There is no password reset. Keep your authenticator app secure — it's your only way to log in.
+            </p>
           </div>
         </div>
       </div>
     )
   }
 
-  // Forgot password flow
-  if (forgotPasswordStep !== 'none') {
+  // 2FA Login Verification (returning user with TOTP enabled)
+  if (requiresTotpCode) {
     return (
       <div className="min-h-screen bg-twitter-gray-lightest flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
@@ -739,70 +742,31 @@ function App() {
               <img src="/logo.svg" alt="AgentPay" className="w-10 h-10" />
               <h1 className="text-3xl font-semibold text-twitter-blue tracking-tight" style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>AgentPay</h1>
             </div>
-            <p className="text-twitter-gray">Reset Password</p>
+            <p className="text-twitter-gray">Enter Authentication Code</p>
           </div>
+          <p className="text-center text-twitter-gray mb-6 text-sm">
+            Open your authenticator app and enter the 6-digit code.
+          </p>
           {error && <div className="bg-red-100 text-red-600 p-3 rounded-lg mb-4 text-sm">{error}</div>}
-
-          {forgotPasswordStep === 'email' && (
-            <form onSubmit={handleForgotPassword} className="space-y-4">
-              <p className="text-sm text-twitter-gray">Enter your email and we'll send you a reset code.</p>
-              <input
-                type="email"
-                value={resetEmail}
-                onChange={(e) => setResetEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue"
-                required
-              />
-              <button type="submit" disabled={loading} className="w-full bg-twitter-blue hover:bg-twitter-blue-dark text-white py-3 rounded-full font-semibold transition-colors disabled:opacity-50">
-                {loading ? 'Sending...' : 'Send Reset Code'}
-              </button>
-            </form>
-          )}
-
-          {forgotPasswordStep === 'code' && (
-            <form onSubmit={handleResetPassword} className="space-y-4">
-              <p className="text-sm text-twitter-gray">Enter the 6-digit code and your new password.</p>
-              {devCode && (
-                <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 p-3 rounded-lg text-sm text-center">
-                  <div className="text-xs font-semibold mb-1">DEV MODE - Your code:</div>
-                  <div className="text-2xl font-bold font-mono tracking-widest">{devCode}</div>
-                </div>
-              )}
-              <input
-                type="text"
-                value={resetCode}
-                onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000"
-                maxLength={6}
-                className="w-full p-4 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue text-center text-3xl font-bold tracking-widest font-mono"
-                required
-              />
-              <input
-                type="password"
-                value={resetNewPassword}
-                onChange={(e) => setResetNewPassword(e.target.value)}
-                placeholder="New password (min 8 characters)"
-                className="w-full p-3 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue"
-                required
-                minLength={8}
-              />
-              <button type="submit" disabled={loading || resetCode.length !== 6} className="w-full bg-twitter-blue hover:bg-twitter-blue-dark text-white py-3 rounded-full font-semibold transition-colors disabled:opacity-50">
-                {loading ? 'Resetting...' : 'Reset Password'}
-              </button>
-            </form>
-          )}
-
-          {forgotPasswordStep === 'done' && (
-            <div className="text-center space-y-4">
-              <div className="text-4xl">&#10003;</div>
-              <p className="text-twitter-black font-semibold">Password reset successfully!</p>
-              <p className="text-sm text-twitter-gray">You can now log in with your new password.</p>
-            </div>
-          )}
-
+          <div className="space-y-4">
+            <input
+              type="text"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="000000"
+              maxLength={6}
+              className="w-full p-4 border border-twitter-gray-lighter rounded-lg focus:outline-none focus:border-twitter-blue text-center text-3xl font-bold tracking-widest font-mono"
+            />
+            <button
+              onClick={verify2FALogin}
+              disabled={loading || totpCode.length !== 6}
+              className="w-full bg-twitter-blue hover:bg-twitter-blue-dark text-white py-3 rounded-full font-semibold transition-colors disabled:opacity-50"
+            >
+              {loading ? 'Verifying...' : 'Verify Code'}
+            </button>
+          </div>
           <div className="mt-4 text-center">
-            <button onClick={() => { setForgotPasswordStep('none'); setError(null); setResetEmail(''); setResetCode(''); setResetNewPassword('') }} className="text-twitter-blue text-sm hover:underline">
+            <button onClick={() => { setRequiresTotpCode(false); setTempToken(null); setTotpCode(''); setError(null) }} className="text-twitter-blue text-sm hover:underline">
               Back to Login
             </button>
           </div>
@@ -883,11 +847,6 @@ function App() {
               >
                 {loading ? 'Logging in...' : 'Login'}
               </button>
-              <div className="text-center mt-2">
-                <button type="button" onClick={() => { setForgotPasswordStep('email'); setError(null) }} className="text-twitter-blue text-sm hover:underline">
-                  Forgot Password?
-                </button>
-              </div>
             </form>
           ) : (
             <form onSubmit={handleRegister} className="space-y-4">

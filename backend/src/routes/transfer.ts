@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireHuman } from '../middleware/auth';
 import { transferUsdc, getUsdcBalance } from '../services/solana';
 import { notifyUser } from '../services/websocket';
 import { dispatchWebhook } from '../services/webhook';
@@ -84,7 +84,7 @@ const withdrawSchema = z.object({
   memo: z.string().max(500).optional(),
 });
 
-transferRouter.post('/withdraw', async (req: Request, res: Response) => {
+transferRouter.post('/withdraw', requireHuman, async (req: Request, res: Response) => {
   const parsed = withdrawSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new AppError(parsed.error.issues[0].message, 400, 'VALIDATION_ERROR');

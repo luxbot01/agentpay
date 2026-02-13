@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireHuman } from '../middleware/auth';
 import { getUsdcBalance, getSolBalance, requestAirdrop } from '../services/solana';
 import { notifyUser } from '../services/websocket';
 import { AppError } from '../middleware/errorHandler';
@@ -83,7 +83,7 @@ const depositSchema = z.object({
   amount: z.number().positive().max(10000).default(10),
 });
 
-walletRouter.post('/deposit', async (req: Request, res: Response) => {
+walletRouter.post('/deposit', requireHuman, async (req: Request, res: Response) => {
   const parsed = depositSchema.safeParse(req.body);
   const amount = parsed.success ? parsed.data.amount : 10;
   const userId = req.user!.userId;
@@ -131,7 +131,7 @@ walletRouter.post('/deposit', async (req: Request, res: Response) => {
 });
 
 // === DEVNET AIRDROP (testing only) ===
-walletRouter.post('/airdrop', async (req: Request, res: Response) => {
+walletRouter.post('/airdrop', requireHuman, async (req: Request, res: Response) => {
   if (process.env.SOLANA_NETWORK !== 'devnet') {
     throw new AppError('Airdrop only available on devnet', 403, 'NOT_DEVNET');
   }

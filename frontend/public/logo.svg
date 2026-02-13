@@ -9,7 +9,8 @@
   <path d="M50 25 L65 65 L55 65 L52 55 L48 55 L45 65 L35 65 Z" fill="#1DA1F2"/>
   <rect x="48" y="45" width="4" height="8" fill="white"/>
   
-  <!-- Small coin/dot at the bottom right representing crypto -->
-  <circle cx="72" cy="72" r="8" fill="#1DA1F2"/>
-  <text x="72" y="76" text-anchor="middle" font-size="8" fill="white" font-weight="bold">$</text>
+  <!-- Dollar sign circle tangent to A corner (65,65) and outer circle edge -->
+  <!-- Center at midpoint (73.5, 73.5), radius 8.5 to touch both points -->
+  <circle cx="73.5" cy="73.5" r="8.5" fill="#1DA1F2"/>
+  <text x="73.5" y="77" text-anchor="middle" font-size="9" fill="white" font-weight="bold">$</text>
 </svg>
