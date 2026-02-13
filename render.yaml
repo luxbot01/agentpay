@@ -3,8 +3,9 @@ services:
     name: agentpay-backend
     runtime: node
     plan: free
-    buildCommand: ./render-build.sh
-    startCommand: ./render-start.sh
+    rootDir: backend
+    buildCommand: chmod +x render-build.sh && ./render-build.sh
+    startCommand: chmod +x render-start.sh && ./render-start.sh
     envVars:
       - key: NODE_ENV
         value: production
@@ -18,8 +19,16 @@ services:
         generateValue: true
       - key: BANK_ENCRYPTION_KEY
         generateValue: true
-      - key: RESEND_API_KEY
-        sync: false  # You'll set this manually in Render dashboard
+      - key: TOTP_ENCRYPTION_KEY
+        generateValue: true
+      - key: CORS_ORIGIN
+        value: https://luxbot01.github.io
+      - key: SOLANA_RPC_URL
+        value: https://api.devnet.solana.com
+      - key: SOLANA_NETWORK
+        value: devnet
+      - key: USDC_MINT_ADDRESS
+        value: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 
 databases:
   - name: agentpay-db
