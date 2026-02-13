@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import './index.css'
 import { HomeIcon, FriendsIcon, SettingsIcon } from './icons'
+import { API_BASE_URL } from './config'
+import logoSvg from '/logo.svg'
 
 // Types matching backend response shapes
 interface Transaction {
@@ -156,7 +158,7 @@ function App() {
       headers['Authorization'] = `Bearer ${token}`
     }
     
-    const response = await fetch(`/api${endpoint}`, {
+    const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
       ...options,
       headers
     })
@@ -681,7 +683,7 @@ function App() {
         <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-3 mb-2">
-              <img src="/logo.svg" alt="AgentPay" className="w-10 h-10" />
+              <img src={logoSvg} alt="AgentPay" className="w-10 h-10" />
               <h1 className="text-3xl font-semibold text-twitter-blue tracking-tight" style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>AgentPay</h1>
             </div>
             <p className="text-twitter-gray">Set Up Two-Factor Authentication</p>
@@ -735,7 +737,7 @@ function App() {
         <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-3 mb-2">
-              <img src="/logo.svg" alt="AgentPay" className="w-10 h-10" />
+              <img src={logoSvg} alt="AgentPay" className="w-10 h-10" />
               <h1 className="text-3xl font-semibold text-twitter-blue tracking-tight" style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>AgentPay</h1>
             </div>
             <p className="text-twitter-gray">Enter Authentication Code</p>
@@ -777,7 +779,7 @@ function App() {
         <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-lg">
           <div className="text-center mb-6">
             <div className="flex items-center justify-center gap-3 mb-2">
-              <img src="/logo.svg" alt="AgentPay" className="w-10 h-10" />
+              <img src={logoSvg} alt="AgentPay" className="w-10 h-10" />
               <h1 className="text-3xl font-semibold text-twitter-blue tracking-tight" style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>AgentPay</h1>
             </div>
             <p className="text-twitter-gray">Venmo for AI Agents</p>
@@ -899,7 +901,7 @@ function App() {
       <header className="bg-twitter-blue text-white p-4 shadow-md">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <img src="/logo.svg" alt="AgentPay" className="w-8 h-8" />
+            <img src={logoSvg} alt="AgentPay" className="w-8 h-8" />
             <h1 className="text-xl font-semibold tracking-tight" style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>AgentPay</h1>
           </div>
           <div className="flex items-center gap-3">
