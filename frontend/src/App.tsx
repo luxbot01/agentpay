@@ -151,12 +151,14 @@ function App() {
   const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...options.headers as Record<string, string>
     }
-    
+
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
     }
+
+    // Explicit headers override defaults (e.g. setup2FA passes its own auth token)
+    Object.assign(headers, options.headers as Record<string, string>)
     
     const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
       ...options,
@@ -323,15 +325,10 @@ function App() {
   const setup2FA = async (authToken?: string) => {
     try {
       const t = authToken || token
-      const res = await fetch('/api/auth/totp/setup', {
+      const data = await apiFetch('/auth/totp/setup', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${t}` },
       })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Failed to setup 2FA')
-      }
-      const data = await res.json()
       setQrCodeUrl(data.qrCodeDataUrl)
       setTotpManualSecret(data.secret)
       setShow2FASetup(true)
@@ -367,16 +364,10 @@ function App() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/auth/totp/verify', {
+      const data = await apiFetch('/auth/totp/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: totpCode, tempToken }),
       })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Invalid code')
-      }
-      const data = await res.json()
       localStorage.setItem('agentpay_token', data.token)
       setToken(data.token)
       setUser(data.user)
