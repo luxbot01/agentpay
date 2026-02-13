@@ -685,11 +685,8 @@ function App() {
   // Agent pairing handlers
   const fetchLinkedAgents = async () => {
     try {
-      const res = await apiFetch('/auth/agents')
-      if (res.ok) {
-        const data = await res.json()
-        setLinkedAgents(data.agents || [])
-      }
+      const data = await apiFetch('/auth/agents')
+      setLinkedAgents(data.agents || [])
     } catch { /* ignore */ }
   }
 
@@ -701,12 +698,10 @@ function App() {
       if (pairingAgentName.trim()) body.agentName = pairingAgentName.trim().replace(/^@/, '')
       if (pairingDailyLimit) body.dailyLimit = parseFloat(pairingDailyLimit)
       if (pairingTxLimit) body.txLimit = parseFloat(pairingTxLimit)
-      const res = await apiFetch('/auth/agents/pairing-token', {
+      const data = await apiFetch('/auth/agents/pairing-token', {
         method: 'POST',
         body: JSON.stringify(body),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to generate token')
       setPairingToken(data.pairingToken)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to generate pairing token')
@@ -717,12 +712,10 @@ function App() {
 
   const handleRevokeAgent = async (agentId: string) => {
     try {
-      const res = await apiFetch(`/auth/agents/${agentId}`, { method: 'DELETE' })
-      if (res.ok) {
-        fetchLinkedAgents()
-        setToast('Agent revoked')
-        setTimeout(() => setToast(null), 2500)
-      }
+      await apiFetch(`/auth/agents/${agentId}`, { method: 'DELETE' })
+      fetchLinkedAgents()
+      setToast('Agent revoked')
+      setTimeout(() => setToast(null), 2500)
     } catch { /* ignore */ }
   }
 
